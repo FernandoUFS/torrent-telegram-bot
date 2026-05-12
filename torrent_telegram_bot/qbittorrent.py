@@ -92,7 +92,8 @@ class Qbittorrent:
         else:
             result = self.client.torrents_add(torrent_files=torrent_data, category=temp_category)
 
-        if result != "Ok.":
+        success = result == "Ok." or getattr(result, "success_count", 0) > 0
+        if not success:
             raise Exception("Error adding torrent")
 
         while True:
