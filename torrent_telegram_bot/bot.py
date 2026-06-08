@@ -445,20 +445,21 @@ async def check_torrent_download_status(context):  # noqa: C901
                         ):
                             response = f'Torrent "*{task.name}*" was successfully downloaded'
                             try:
-                                notify_flag = False
-                                try:
-                                    chat = cfg["telegram"]["allow_chat"].get(torrent[0])
-                                except Exception:
-                                    notify_flag = False
-                                else:
-                                    if chat["notify"] == "personal":
-                                        notify_flag = True
-                                    if notify_flag:
-                                        context.bot.send_message(
-                                            chat_id=torrent[0],
-                                            text=response,
-                                            parse_mode="Markdown",
-                                        )
+                                chat = next(
+                                    (
+                                        item
+                                        for item in cfg["telegram"]["allow_chat"]
+                                        if str(item["telegram_id"]) == str(torrent[0])
+                                    ),
+                                    None,
+                                )
+
+                                if chat and chat.get("notify") == "personal":
+                                    await context.bot.send_message(
+                                        chat_id=int(torrent[0]),
+                                        text=response,
+                                        parse_mode="Markdown",
+                                    )
 
                                 notify_about_all = [
                                     chat["telegram_id"]
@@ -468,7 +469,7 @@ async def check_torrent_download_status(context):  # noqa: C901
                                 if notify_about_all:
                                     for telegram_id in notify_about_all:
                                         await context.bot.send_message(
-                                            chat_id=telegram_id,
+                                            chat_id=int(telegram_id),
                                             text=response,
                                             parse_mode="Markdown",
                                         )
