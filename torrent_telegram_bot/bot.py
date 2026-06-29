@@ -95,29 +95,51 @@ async def download_torrent_action(update, context):
     torrent_data = await file.download_as_bytearray()
     torrent_data = b64encode(torrent_data).decode("utf-8")
     context.user_data.clear()
-    context.user_data.update({"torrent_data": torrent_data})
+    context.user_data.update({"torrent_data": torrent_data, "download_categories": []})
     category = tools.get_torrent_category(config=cfg, chat_id=update.effective_chat.id)
 
-    for client_path in cfg["client"]["path"]:
+    if isinstance(client, Qbittorrent):
+        try:
+            client_categories = client.get_categories()
+        except Exception as exc:
+            logger.error(f"Unable to load qBittorrent categories: {type(exc).__name__}({exc})")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="I couldn't connect to qBittorrent to load categories. Try again later.",
+            )
+            return
+    else:
+        client_categories = cfg["client"]["path"]
+
+    for client_path in client_categories:
         if category:
             if client_path["category"] in category:
+                context.user_data["download_categories"].append(client_path)
                 keyboard.append(
                     [
                         InlineKeyboardButton(
                             client_path["category"],
-                            callback_data=f"download:{client_path['dir']}",
+                            callback_data=f"download:{len(context.user_data['download_categories']) - 1}",
                         )
                     ]
                 )
         else:
+            context.user_data["download_categories"].append(client_path)
             keyboard.append(
                 [
                     InlineKeyboardButton(
                         client_path["category"],
-                        callback_data=f"download:{client_path['dir']}",
+                        callback_data=f"download:{len(context.user_data['download_categories']) - 1}",
                     )
                 ]
             )
+    if not keyboard:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="There are no qBittorrent categories available for this chat.",
+        )
+        return
+
     keyboard.append([InlineKeyboardButton("Cancel", callback_data="download:cancel")])
     try:
         await context.bot.send_message(
@@ -140,9 +162,11 @@ async def download_torrent_logic(update, context):
         )
     else:
         try:
+            selected_category = context.user_data["download_categories"][int(callback_data)]
             result = client.add_torrent(
                 torrent_data=b64decode(context.user_data["torrent_data"]),
-                download_dir=callback_data,
+                download_dir=selected_category["dir"],
+                category=selected_category["category"],
             )
         except Exception:
             await error_action(update, context)
@@ -174,12 +198,13 @@ async def download_torrent_logic(update, context):
                 f"User {update.effective_user.first_name} "
                 f"{update.effective_user.last_name} ({update.effective_user.username}) "
                 f"added a torrent file {result.name} to the torrent client download queue "
-                f"with the path {callback_data}"
+                f"with the path {selected_category['dir']} and category {selected_category['category']}"
             )
         else:
             logger.error(
                 f"An error occurred while adding a torrent file {result.name} "
-                f"to the torrent client queue with the path {callback_data} "
+                f"to the torrent client queue with the path {selected_category['dir']} "
+                f"and category {selected_category['category']} "
                 f"by user {update.effective_user.first_name} "
                 f"{update.effective_user.last_name} ({update.effective_user.username})"
             )

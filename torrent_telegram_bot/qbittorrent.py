@@ -1,5 +1,3 @@
-import secrets
-import string
 from datetime import datetime, timedelta
 from time import sleep
 from zoneinfo import ZoneInfo
@@ -28,11 +26,6 @@ class Qbittorrent:
     def __get_client(self) -> Client:
         """Construct qbittorrent client instance"""
         return Client(host=self.address, port=self.port, username=self.user, password=self.password)
-
-    def __generate_random_string(self, length):
-        characters = string.ascii_letters + string.digits
-        random_string = "".join(secrets.choice(characters) for i in range(length))
-        return random_string
 
     def get_torrents(self) -> list[Torrent]:
         """Get all torrents from client"""
@@ -81,31 +74,57 @@ class Qbittorrent:
         """Remove torrent by torrent hash"""
         return self.client.torrents_delete(torrent_hashes=torrent_id, delete_files=delete_data)
 
+    def get_categories(self) -> list[dict[str, str]]:
+        """Get categories from client"""
+        categories = self.client.torrents_categories()
+        return [
+            {
+                "category": category_name,
+                "dir": self.__get_category_save_path(category),
+            }
+            for category_name, category in sorted(categories.items())
+        ]
+
+    def __get_category_save_path(self, category) -> str:
+        if isinstance(category, dict):
+            return category.get("savePath", "")
+        return getattr(category, "savePath", "")
+
+    def __get_added_hashes(self, result) -> list[str]:
+        if isinstance(result, dict):
+            return [str(torrent_hash) for torrent_hash in result.get("added", [])]
+        return []
+
     def add_torrent(self, torrent_data: bytes, **kwargs) -> Torrent:
         """Add torrent to client"""
-        temp_category = self.__generate_random_string(6)
+        category = kwargs.get("category")
+        existing_torrent_hashes = {torrent.hash for torrent in self.client.torrents_info()}
 
-        if "download_dir" in kwargs:
+        if kwargs.get("download_dir"):
             result = self.client.torrents_add(
-                torrent_files=torrent_data, save_path=kwargs.get("download_dir"), category=temp_category
+                torrent_files=torrent_data, save_path=kwargs.get("download_dir"), category=category
             )
         else:
-            result = self.client.torrents_add(torrent_files=torrent_data, category=temp_category)
+            result = self.client.torrents_add(torrent_files=torrent_data, category=category)
 
         success = result == "Ok." or getattr(result, "success_count", 0) > 0
         if not success:
             raise Exception("Error adding torrent")
 
         while True:
-            torrents = self.client.torrents_info(category=temp_category)
+            added_hashes = self.__get_added_hashes(result)
+            if added_hashes:
+                torrents = self.client.torrents_info(torrent_hashes=added_hashes)
+            else:
+                torrents = [
+                    torrent for torrent in self.client.torrents_info() if torrent.hash not in existing_torrent_hashes
+                ]
             if len(torrents) > 0:
                 break
             else:
                 sleep(1)
 
         torrent = torrents[0]
-
-        self.client.torrents_remove_categories(categories=temp_category)
 
         return Torrent(
             torrent_id=str(torrent.hash),
